@@ -740,7 +740,12 @@ with tab3:
     current_catalog = db.get_all_catalog_items()
     df_cat = pd.DataFrame(current_catalog)
 
-    tab3_sub1, tab3_sub2, tab3_sub3 = st.tabs(["📋 Current Catalog", "➕ Add New Service", "✏️ Edit / Delete Service"])
+    tab3_sub1, tab3_sub2, tab3_sub3, tab3_sub4 = st.tabs([
+        "📋 Current Catalog",
+        "📥 Import CSV / Excel / Sheets",
+        "➕ Add New Service",
+        "✏️ Edit / Delete Service"
+    ])
 
     with tab3_sub1:
         st.markdown("#### 🏢 Industry Catalog Presets")
@@ -780,12 +785,79 @@ with tab3:
             hide_index=True
         )
 
-        if st.button("🔄 Reset Catalog to Default"):
-            db.reset_catalog()
-            st.toast("Catalog reset to defaults!", icon="🔄")
-            st.rerun()
+        b_col1, b_col2 = st.columns([1, 1])
+        with b_col1:
+            if st.button("🔄 Reset Catalog to Default"):
+                db.reset_catalog()
+                st.toast("Catalog reset to defaults!", icon="🔄")
+                st.rerun()
+        with b_col2:
+            if not df_cat.empty:
+                csv_data = df_cat[["service_name", "unit_price", "category"]].to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Export Catalog to CSV",
+                    data=csv_data,
+                    file_name="pricing_catalog_export.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
 
     with tab3_sub2:
+        st.markdown("#### 📂 Import Pricing Catalog from CSV, Excel, or Google Sheets")
+        st.caption("Upload your pricing list or paste a public Google Sheets / Airtable CSV export link.")
+        
+        imp_col1, imp_col2 = st.columns(2)
+        
+        with imp_col1:
+            st.markdown("##### 📁 Method A: Upload CSV or Excel File")
+            uploaded_file = st.file_uploader("Upload Pricing File", type=["csv", "xlsx", "xls"], help="File should have 'service_name' and 'unit_price' columns.")
+            replace_mode = st.checkbox("Replace entire existing catalog (unchecked = add/update)", value=False)
+            
+            if uploaded_file is not None:
+                if st.button("📥 Import Uploaded File", type="primary", use_container_width=True):
+                    try:
+                        if uploaded_file.name.endswith(".csv"):
+                            imported_df = pd.read_csv(uploaded_file)
+                        else:
+                            imported_df = pd.read_excel(uploaded_file)
+                            
+                        success, msg = db.import_catalog_from_dataframe(imported_df, replace_existing=replace_mode)
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                    except Exception as e:
+                        st.error(f"Error parsing file: {e}")
+
+        with imp_col2:
+            st.markdown("##### 🌐 Method B: Google Sheets / Airtable CSV URL")
+            sheet_url = st.text_input(
+                "Google Sheets Published CSV URL",
+                placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv",
+                help="Publish your Google Sheet to the web as CSV, or paste any direct raw CSV link."
+            )
+            replace_mode_url = st.checkbox("Replace existing catalog with URL data", value=False, key="rep_url")
+            
+            if st.button("🔗 Fetch & Sync from URL", type="primary", use_container_width=True):
+                if not sheet_url.strip():
+                    st.warning("Please enter a valid CSV URL.")
+                else:
+                    try:
+                        with st.spinner("Fetching live pricing from URL..."):
+                            imported_df = pd.read_csv(sheet_url.strip())
+                            success, msg = db.import_catalog_from_dataframe(imported_df, replace_existing=replace_mode_url)
+                            if success:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    except Exception as e:
+                        st.error(f"Failed to fetch data from URL: {e}")
+
+        st.info("💡 **Required Columns**: Your CSV/Sheets file should contain at least a **service name** (or item/product) column and a **unit price** (or price/rate) column. Category is optional.")
+
+    with tab3_sub3:
         st.markdown("#### Add a New Service to Database")
         with st.form("add_service_form", clear_on_submit=True):
             f_name = st.text_input("Service Name", placeholder="e.g. AI Prompt Engineering & Fine-Tuning")
@@ -804,7 +876,7 @@ with tab3:
                     else:
                         st.error(f"Error: {msg}")
 
-    with tab3_sub3:
+    with tab3_sub4:
         st.markdown("#### Modify or Delete an Existing Service")
         if current_catalog:
             service_options = {f"{it['service_name']} (ID: {it['id']})": it for it in current_catalog}

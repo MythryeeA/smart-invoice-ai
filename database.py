@@ -236,6 +236,92 @@ def load_preset_catalog(preset_name: str):
     conn.close()
     return True, f"Loaded preset '{preset_name}' with {len(items)} items."
 
+def import_catalog_from_dataframe(df, replace_existing: bool = False):
+    """
+    Import catalog services and pricing from a pandas DataFrame (CSV, Excel, or Google Sheets).
+    Auto-detects and normalizes column names:
+    - Service Name: service_name, service, item, product, name, description
+    - Unit Price: unit_price, price, rate, cost, amount
+    - Category: category, type, group, dept
+    """
+    import pandas as pd
+    
+    # Normalize column names to lowercase stripped
+    cols_map = {str(c).lower().strip(): c for c in df.columns}
+    
+    # Identify service name column
+    name_col = None
+    for cand in ["service_name", "service", "item", "product", "name", "description", "item_name", "title"]:
+        if cand in cols_map:
+            name_col = cols_map[cand]
+            break
+            
+    # Identify price column
+    price_col = None
+    for cand in ["unit_price", "price", "rate", "cost", "amount", "unit price", "price_per_unit"]:
+        if cand in cols_map:
+            price_col = cols_map[cand]
+            break
+            
+    # Identify category column (optional)
+    cat_col = None
+    for cand in ["category", "type", "group", "department", "dept", "tag"]:
+        if cand in cols_map:
+            cat_col = cols_map[cand]
+            break
+            
+    if not name_col or not price_col:
+        return False, f"Could not find required columns. Need at least a service/product column and a price/rate column. Found: {list(df.columns)}"
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if replace_existing:
+        cursor.execute("DELETE FROM catalog")
+        
+    inserted_count = 0
+    updated_count = 0
+    
+    for _, row in df.iterrows():
+        s_name = str(row[name_col]).strip()
+        if not s_name or s_name.lower() in ["nan", "none", "null", ""]:
+            continue
+            
+        try:
+            # Clean price string (e.g. "$400.00" -> 400.0)
+            raw_p = str(row[price_col]).replace("$", "").replace(",", "").strip()
+            u_price = float(raw_p)
+        except Exception:
+            continue
+            
+        cat = str(row[cat_col]).strip() if cat_col and not pd.isna(row[cat_col]) else "General"
+        if cat.lower() in ["nan", "none", "null", ""]:
+            cat = "General"
+            
+        try:
+            cursor.execute(
+                "INSERT INTO catalog (service_name, unit_price, category) VALUES (?, ?, ?)",
+                (s_name, u_price, cat)
+            )
+            inserted_count += 1
+        except sqlite3.IntegrityError:
+            cursor.execute(
+                "UPDATE catalog SET unit_price = ?, category = ? WHERE service_name = ?",
+                (u_price, cat, s_name)
+            )
+            updated_count += 1
+            
+    conn.commit()
+    conn.close()
+    return True, f"Successfully imported catalog: {inserted_count} new items added, {updated_count} items updated."
+
+def export_catalog_to_dataframe():
+    """Export the current SQLite catalog as a pandas DataFrame."""
+    import pandas as pd
+    items = get_all_catalog_items()
+    return pd.DataFrame(items)
+
+
 # ----------------- INVOICES CRUD ----------------- #
 
 def get_next_invoice_number():
